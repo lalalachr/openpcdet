@@ -1,0 +1,161 @@
+# CLASS_NAMES: ['pedestrian', 'ech', 'container_truck']
+CLASS_NAMES: ['ech', 'truck']
+#CLASS_NAMES: ['ech']
+
+DATA_CONFIG: 
+    _BASE_CONFIG_: /home/star/openpcdet/OpenPCDet/tools/cfgs/dataset_configs/custom_dataset.yaml
+    POINT_CLOUD_RANGE: [-26, -39.68, -2.5, 43.12, 39.68, 6]
+    DATA_PROCESSOR:
+        - NAME: mask_points_and_boxes_outside_range
+          REMOVE_OUTSIDE_BOXES: True
+
+        - NAME: shuffle_points
+          SHUFFLE_ENABLED: {
+            'train': True,
+            'test': Tru
+          }
+
+        - NAME: transform_points_to_voxels
+          # VOXEL_SIZE: [0.16, 0.16, 4]
+          VOXEL_SIZE: [0.16, 0.16, 8.5]
+          MAX_POINTS_PER_VOXEL: 32
+          MAX_NUMBER_OF_VOXELS: {
+            'train': 16000,
+            'test': 40000
+          }
+    DATA_AUGMENTOR:
+        DISABLE_AUG_LIST: ['placeholder']
+        AUG_CONFIG_LIST:
+            - NAME: gt_sampling
+              USE_ROAD_PLANE: False
+              DB_INFO_PATH:
+                  - custom_dbinfos_train.pkl
+              PREPARE: {
+                 # filter_by_min_points: ['pedestrian:5', 'ech:5', 'container_truck:5'],
+                 filter_by_min_points: ['ech:15', 'truck:15'],
+                 # filter_by_min_points: ['ech:15'],
+                 # filter_by_difficulty: [-1],
+              }
+
+              # SAMPLE_GROUPS: ['pedestrian:15','ech:20', 'container_truck:20']
+              SAMPLE_GROUPS: ['ech:20', 'truck:20']
+              # SAMPLE_GROUPS: ['ech:20']
+              NUM_POINT_FEATURES: 4
+              DATABASE_WITH_FAKELIDAR: False
+              REMOVE_EXTRA_WIDTH: [0.0, 0.0, 0.0]
+              LIMIT_WHOLE_SCENE: False
+
+            - NAME: random_world_flip
+              ALONG_AXIS_LIST: ['x']
+
+            - NAME: random_world_rotation
+              WORLD_ROT_ANGLE: [-0.78539816, 0.78539816]
+
+            - NAME: random_world_scaling
+              WORLD_SCALE_RANGE: [0.95, 1.05]
+
+MODEL:
+    NAME: PointPillar
+
+    VFE:
+        NAME: PillarVFE
+        WITH_DISTANCE: False
+        USE_ABSLOTE_XYZ: True
+        USE_NORM: True
+        NUM_FILTERS: [64]
+
+    MAP_TO_BEV:
+        NAME: PointPillarScatter
+        NUM_BEV_FEATURES: 64
+
+    BACKBONE_2D:
+        NAME: BaseBEVBackbone
+        LAYER_NUMS: [3, 5, 5]
+        LAYER_STRIDES: [2, 2, 2]
+        NUM_FILTERS: [64, 128, 256]
+        UPSAMPLE_STRIDES: [1, 2, 4]
+        NUM_UPSAMPLE_FILTERS: [128, 128, 128]
+
+    DENSE_HEAD:                                     # 定义了如何生成和处理锚框（anchors），以及目标分配和损失计算的细节
+        NAME: AnchorHeadSingle                      # 使用单一锚框头进行检测
+        CLASS_AGNOSTIC: False                       # 检测是否考虑类别。False 表示类别相关。
+
+        USE_DIRECTION_CLASSIFIER: True              # 是否使用方向分类器
+        DIR_OFFSET: 0.78539                         # 方向分类器的偏移量
+        DIR_LIMIT_OFFSET: 0.0                       # 方向限制偏移
+        NUM_DIR_BINS: 2                             # 方向分类的bin数量。
+
+        ANCHOR_GENERATOR_CONFIG: [
+            {
+                'class_name': 'ech',                # 类别名称
+                'anchor_sizes': [[7.2, 5, 8.5]],    # 锚框尺寸
+                'anchor_rotations': [0, 1.57],      # 锚框旋转角度
+                'anchor_bottom_heights': [-2.2],    # 锚框底部高度
+                'align_center': False,              # 是否对齐中心
+                'feature_map_stride': 2,            # 特征图步长
+                'matched_threshold': 0.6,           # 匹配阈值
+                'unmatched_threshold': 0.45         # 未匹配阈值
+            },
+            {
+                'class_name': 'truck',
+                'anchor_sizes': [[18, 4, 5]],
+                'anchor_rotations': [-2, 2],
+                'anchor_bottom_heights': [-2.3],
+                'align_center': False,
+                'feature_map_stride': 2,
+                'matched_threshold': 0.5,
+                'unmatched_threshold': 0.35
+            }
+        ]
+
+        TARGET_ASSIGNER_CONFIG:
+            NAME: AxisAlignedTargetAssigner       # 目标分配器的名称
+            POS_FRACTION: -1.0                    # 正样本比例。-1.0 表示不固定正样本比例
+            SAMPLE_SIZE: 512                      # 采样大小
+            NORM_BY_NUM_EXAMPLES: False           # 是否按样本数量归一化
+            MATCH_HEIGHT: False                   # 是否匹配高度
+            BOX_CODER: ResidualCoder              # 使用残差编码器进行框编码
+
+        LOSS_CONFIG:
+            LOSS_WEIGHTS: {
+                'cls_weight': 1.0,                # 分类损失的权重
+                'loc_weight': 2.0,                # 位置损失的权重
+                'dir_weight': 0.2,                # 方向损失的权重
+                'code_weights': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+            }                                     # 编码损失的权重
+
+    POST_PROCESSING:
+        RECALL_THRESH_LIST: [0.3, 0.5, 0.7]
+        SCORE_THRESH: 0.1
+        OUTPUT_RAW_SCORE: False
+
+        EVAL_METRIC: kitti
+
+        NMS_CONFIG:
+            MULTI_CLASSES_NMS: False
+            NMS_TYPE: nms_gpu
+            NMS_THRESH: 0.01
+            NMS_PRE_MAXSIZE: 4096
+            NMS_POST_MAXSIZE: 500
+
+
+OPTIMIZATION:                 # 优化器
+    BATCH_SIZE_PER_GPU: 4     # 默认batch_size = 4 ， epochs = 80
+    NUM_EPOCHS: 80
+
+    OPTIMIZER: adam_onecycle  # Adam优化器并结合OneCycle学习率调度策略。
+    LR: 0.003                 # 学习率
+    WEIGHT_DECAY: 0.01        # 权重衰减。这里设置为0.01。权重衰减是一种正则化技术，用于防止过拟合。
+    MOMENTUM: 0.9             # 动量因子。这里设置为0.9。动量加速了梯度下降方向的收敛速度，代码里的键值是'BETAS'啊：adam_onecycle好像没有直接用到MOMENTUM
+
+    MOMS: [0.95, 0.85]        # 动量的最大值和最小值 OneCycle策略会在训练的不同阶段动态调整动量 
+    PCT_START: 0.4            # 学习率周期的百分比，在此之前学习率会从初始值增大到最大值。这里设置为0.4，意味着在前40%的训练时间内，学习率会从初始值增大到最大值，然后再逐渐减小
+    DIV_FACTOR: 10            # 初始学习率与最大学习率的比值。这里设置为10，意味着初始学习率是最大学习率的十分之一。即0.03
+    DECAY_STEP_LIST: [35, 45] # 指定在训练的哪些周期进行学习率衰减。这里设置为 [35, 45]，意味着在第35和第45个周期时，学习率会按 LR_DECAY 进行衰减
+    LR_DECAY: 0.1             # 学习率衰减因子。这里设置为0.1，意味着在 DECAY_STEP_LIST 指定的周期点，学习率会乘以0.1。
+    LR_CLIP: 0.0000001        # 学习率的最小值。这里设置为0.0000001，确保学习率不会低于这个值。
+
+    LR_WARMUP: False          # 是否启用学习率预热。这里设置为 False，意味着不启用预热
+    WARMUP_EPOCH: 1           #  学习率预热的周期数。这里设置为1。如果启用了预热，在前1个周期内，学习率会从一个非常小的值逐渐增加到初始学习率。
+
+    GRAD_NORM_CLIP: 10        # 梯度裁剪的阈值。这里设置为10。梯度裁剪用于防止梯度爆炸，即将梯度值限制在一个合理的范围内。
